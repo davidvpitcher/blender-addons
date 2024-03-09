@@ -2,98 +2,94 @@ import bpy
 import os
 
 bl_info = {
-    "name": "LOD Generators",
+    "name": "LOD Generator",
     "author": "David Pitcher",
     "version": (1, 0),
     "blender": (2, 80, 0),
     "location": "View3D > Sidebar > LOD Gen Panel",
-    "description": "Generates LODs for the active object using different methods and scaling options",
+    "description": "Generates LODs for the active object with different scaling options",
     "category": "Object",
 }
 
-# Define the property group class first
-class LODGenProperties(bpy.types.PropertyGroup):
-    scaling_options: bpy.props.EnumProperty(
-        name="Apply Scalings",
-        description="Choose how to apply scalings for FBX export",
-        items=[
-            ('FBX_SCALE_ALL', 'All Local', 'Apply all local scalings'),
-            ('FBX_SCALE_UNITS', 'FBX Units Scale', 'Apply FBX unit scaling'),
-        ],
-        default='FBX_SCALE_ALL'
-    )
-
-    base_name_options: bpy.props.EnumProperty(
-        name="Base Name",
-        description="Choose base name source for LOD generation",
-        items=[
-            ('FILE_NAME', 'From Blender File', 'Use the Blender file name as base'),
-            ('OBJECT_NAME', 'From Object Name', 'Use the object name as base'),
-        ],
-        default='FILE_NAME'
-    )
-
-# Define the main operator
-class GenerateLODsOperator(bpy.types.Operator):
-    """Generate LODs with selected options"""
-    bl_idname = "object.generate_lods"
-    bl_label = "Generate LODs"
+class GenerateLODsLocalOperator(bpy.types.Operator):
+    """Generate LODs for the active object with All Local scaling"""
+    bl_idname = "object.generate_lods_local"
+    bl_label = "Generate LODs (All Local)"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        lod_props = context.scene.lod_gen_props
-        # Insert your LOD generation logic here using lod_props.scaling_options and lod_props.base_name_options
-        self.report({'INFO'}, "LODs Generated Successfully")
+        return self.generate_lods(context, 'FBX_SCALE_ALL')
+
+    def generate_lods(self, context, scale_option):
+        # Define the LOD levels and corresponding decimate ratios
+        lod_levels = {
+            'A': 1,
+            'B': 0.8,
+            'C': 0.5,
+            'D': 0.3,
+        }
+
+        blend_file_path = bpy.data.filepath
+        base_file_name, _ = os.path.splitext(os.path.basename(blend_file_path))
+
+        if not base_file_name:
+            self.report({'ERROR'}, "The Blender file needs to be saved to determine the base file name.")
+            return {'CANCELLED'}
+
+        original_obj = bpy.context.active_object
+
+        for suffix, ratio in lod_levels.items():
+            bpy.ops.object.duplicate()
+            new_obj = bpy.context.active_object
+
+            if ratio < 1:
+                mod = new_obj.modifiers.new(name="Decimate", type='DECIMATE')
+                mod.decimate_type = 'COLLAPSE'
+                mod.ratio = ratio
+                bpy.ops.object.modifier_apply(modifier=mod.name)
+
+            for obj in bpy.context.scene.objects:
+                if obj != new_obj:
+                    bpy.data.objects.remove(obj, do_unlink=True)
+
+            new_file_name = f"{base_file_name}{suffix}.blend"
+            bpy.ops.wm.save_as_mainfile(filepath=new_file_name)
+            
+            export_file_name = f"{base_file_name}{suffix}.fbx"
+            bpy.ops.export_scene.fbx(filepath=export_file_name, apply_scale_options=scale_option)
+
+        self.report({'INFO'}, f"LODs Generated Successfully with {scale_option}")
         return {'FINISHED'}
 
-# Define the quick generation operator
-class QuickGenerateLODsOperator(bpy.types.Operator):
-    """Quickly Generate LODs using Object Name and FBX Units Scale"""
-    bl_idname = "object.quick_generate_lods"
-    bl_label = "Quick Generate LODs (Object Name, FBX Units)"
-    bl_options = {'REGISTER', 'UNDO'}
+class GenerateLODsUnitsOperator(GenerateLODsLocalOperator):
+    """Generate LODs for the active object with FBX Units Scale"""
+    bl_idname = "object.generate_lods_units"
+    bl_label = "Generate LODs (FBX Units)"
 
     def execute(self, context):
-        # Insert your quick LOD generation logic here for Object Name and FBX Units Scale
-        self.report({'INFO'}, "Quick LODs Generated Successfully (Object Name, FBX Units)")
-        return {'FINISHED'}
+        return self.generate_lods(context, 'FBX_SCALE_UNITS')
 
-# Define the panel
 class LODGenPanel(bpy.types.Panel):
     """Creates a Panel in the Object properties window"""
-    bl_label = "LOD Generators"
-    bl_idname = "OBJECT_PT_lod_gens"
+    bl_label = "LOD Generator"
+    bl_idname = "OBJECT_PT_lod_gen"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'LOD Gen'
 
     def draw(self, context):
-        lod_props = context.scene.lod_gen_props
         layout = self.layout
+        layout.operator(GenerateLODsLocalOperator.bl_idname)
+        layout.operator(GenerateLODsUnitsOperator.bl_idname)
 
-        layout.label(text="Custom LOD Generation:")
-        layout.prop(lod_props, 'scaling_options', text="Scaling Option")
-        layout.prop(lod_props, 'base_name_options', text="Base Name Source")
-        layout.operator(GenerateLODsOperator.bl_idname)
-
-        layout.separator()
-
-        layout.label(text="Quick LOD Generation:")
-        layout.operator(QuickGenerateLODsOperator.bl_idname)
-
-# Register and unregister functions
 def register():
-    bpy.utils.register_class(LODGenProperties)
-    bpy.types.Scene.lod_gen_props = bpy.props.PointerProperty(type=LODGenProperties)
-    bpy.utils.register_class(GenerateLODsOperator)
-    bpy.utils.register_class(QuickGenerateLODsOperator)
+    bpy.utils.register_class(GenerateLODsLocalOperator)
+    bpy.utils.register_class(GenerateLODsUnitsOperator)
     bpy.utils.register_class(LODGenPanel)
 
 def unregister():
-    bpy.utils.unregister_class(LODGenProperties)
-    del bpy.types.Scene.lod_gen_props
-    bpy.utils.unregister_class(GenerateLODsOperator)
-    bpy.utils.unregister_class(QuickGenerateLODsOperator)
+    bpy.utils.unregister_class(GenerateLODsLocalOperator)
+    bpy.utils.unregister_class(GenerateLODsUnitsOperator)
     bpy.utils.unregister_class(LODGenPanel)
 
 if __name__ == "__main__":
